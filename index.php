@@ -309,7 +309,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         </form>
         
         <div class="footer">
-            &copy; <?= date('Y') ?> 在线预约系统 | <a href="admin/">管理员登录</a>
+            &copy; <?= date('Y') ?> 在线预约系统
         </div>
     </div>
 
