@@ -3,188 +3,93 @@ session_start();
 if (!isset($_SESSION['is_admin'])) { header("Location: login.php"); exit; }
 require '../config.php';
 
-// ==================================================
-// 1. 【自动升级】检测并创建限额表 (无需手动运行SQL)
-// ==================================================
+// 1. 自动升级数据库（后台也加个保险，防止先访问后台报错）
 try {
-    $conn->exec("CREATE TABLE IF NOT EXISTS daily_limits (
-        date DATE PRIMARY KEY,
-        max_num INT NOT NULL DEFAULT 20
-    )");
-} catch (Exception $e) { /* 忽略错误 */ }
+    $conn->exec("CREATE TABLE IF NOT EXISTS daily_limits (date DATE PRIMARY KEY, max_num INT NOT NULL DEFAULT 20)");
+    $conn->query("SELECT message FROM appointments LIMIT 1");
+} catch (Exception $e) {
+    try { $conn->exec("ALTER TABLE appointments ADD COLUMN message VARCHAR(255) DEFAULT ''"); } catch(Exception $ex){}
+}
 
-// ==================================================
-// 2. 处理设置请求 (批量 & 单日)
-// ==================================================
+// 2. 批量与单日设置逻辑
 $sys_msg = '';
-// A. 批量修改整月
 if (isset($_POST['batch_update'])) {
-    $month = $_POST['month']; // 格式 2023-10
-    $limit = (int)$_POST['limit'];
-    
-    // 计算该月有多少天
-    $days_in_month = date('t', strtotime($month . "-01"));
-    
-    try {
-        $sql = "INSERT INTO daily_limits (date, max_num) VALUES (?, ?) ON DUPLICATE KEY UPDATE max_num = ?";
-        $stmt = $conn->prepare($sql);
-        
-        for ($d = 1; $d <= $days_in_month; $d++) {
-            $current_date = $month . '-' . str_pad($d, 2, '0', STR_PAD_LEFT);
-            $stmt->execute([$current_date, $limit, $limit]);
-        }
-        $sys_msg = "<div class='alert success'>✅ 已将 {$month} 全月每日限额设置为 {$limit} 人</div>";
-    } catch (Exception $e) {
-        $sys_msg = "<div class='alert error'>❌ 设置失败：" . $e->getMessage() . "</div>";
-    }
+    $month = $_POST['month']; $limit = (int)$_POST['limit'];
+    $days = date('t', strtotime($month . "-01"));
+    $stmt = $conn->prepare("INSERT INTO daily_limits (date, max_num) VALUES (?, ?) ON DUPLICATE KEY UPDATE max_num = ?");
+    for ($d=1; $d<=$days; $d++) $stmt->execute([$month.'-'.str_pad($d,2,'0',STR_PAD_LEFT), $limit, $limit]);
+    $sys_msg = "<div class='alert success'>✅ 设置成功</div>";
 }
-
-// B. 单日修改
 if (isset($_POST['single_update'])) {
-    $date = $_POST['date'];
-    $limit = (int)$_POST['limit'];
-    try {
-        $stmt = $conn->prepare("INSERT INTO daily_limits (date, max_num) VALUES (?, ?) ON DUPLICATE KEY UPDATE max_num = ?");
-        $stmt->execute([$date, $limit, $limit]);
-        $sys_msg = "<div class='alert success'>✅ 已将 {$date} 的限额设置为 {$limit} 人</div>";
-    } catch (Exception $e) {
-        $sys_msg = "<div class='alert error'>❌ 设置失败</div>";
-    }
+    $stmt = $conn->prepare("INSERT INTO daily_limits (date, max_num) VALUES (?, ?) ON DUPLICATE KEY UPDATE max_num = ?");
+    $stmt->execute([$_POST['date'], $_POST['limit'], $_POST['limit']]);
+    $sys_msg = "<div class='alert success'>✅ 修改成功</div>";
 }
-
-// C. 删除预约
 if (isset($_GET['del'])) {
-    $id = (int)$_GET['del'];
-    $conn->prepare("DELETE FROM appointments WHERE id = ?")->execute([$id]);
+    $conn->prepare("DELETE FROM appointments WHERE id = ?")->execute([(int)$_GET['del']]);
     header("Location: index.php"); exit;
 }
 
-// ==================================================
-// 3. 数据读取
-// ==================================================
-// 获取预约列表
-$stmt = $conn->query("SELECT * FROM appointments ORDER BY created_at DESC LIMIT 50");
-$list = $stmt->fetchAll(PDO::FETCH_ASSOC);
+// 3. 读取数据
+$list = $conn->query("SELECT * FROM appointments ORDER BY created_at DESC LIMIT 50")->fetchAll(PDO::FETCH_ASSOC);
+$chart_data = $conn->query("SELECT DATE_FORMAT(book_time, '%d') as day, COUNT(*) as count FROM appointments WHERE DATE_FORMAT(book_time, '%Y-%m') = DATE_FORMAT(NOW(), '%Y-%m') GROUP BY DATE(book_time)")->fetchAll(PDO::FETCH_ASSOC);
 
-// 获取图表数据
-$sql_chart = "SELECT DATE_FORMAT(book_time, '%d') as day, COUNT(*) as count 
-              FROM appointments 
-              WHERE DATE_FORMAT(book_time, '%Y-%m') = DATE_FORMAT(NOW(), '%Y-%m') 
-              GROUP BY DATE(book_time)";
-$chart_data = $conn->query($sql_chart)->fetchAll(PDO::FETCH_ASSOC);
-
-// 整理图表数据供JS使用
-$chart_json = [];
-foreach($chart_data as $row) {
-    $chart_json[intval($row['day'])] = $row['count'];
-}
-// 补全当月每天的数据（为了显示哪里快满了）
-$days_in_current_month = date('t');
-$final_chart_labels = [];
-$final_chart_counts = [];
-for($i=1; $i<=$days_in_current_month; $i++){
-    $final_chart_labels[] = $i . "日";
-    $final_chart_counts[] = isset($chart_json[$i]) ? $chart_json[$i] : 0;
-}
-
-// 统计本月总数
-$total_month = array_sum($final_chart_counts);
+$chart_json = []; foreach($chart_data as $r) $chart_json[intval($r['day'])] = $r['count'];
+$final_labels = []; $final_counts = [];
+for($i=1; $i<=date('t'); $i++){ $final_labels[]=$i."日"; $final_counts[]=isset($chart_json[$i])?$chart_json[$i]:0; }
+$total_month = array_sum($final_counts);
 ?>
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>预约管理后台</title>
+    <title>后台管理</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        :root { --primary: #4a90e2; --bg: #f0f2f5; --white: #fff; --text: #333; --danger: #ff4d4f; --success: #52c41a; }
+        :root { --primary: #4a90e2; --bg: #f0f2f5; --white: #fff; --text: #333; }
         body { margin: 0; padding: 20px; font-family: -apple-system, sans-serif; background: var(--bg); color: var(--text); }
         .dashboard { max-width: 1000px; margin: 0 auto; }
         .nav-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-        .nav-actions a { margin-left: 15px; color: #666; text-decoration: none; font-size: 14px; }
-        
-        /* 卡片样式 */
         .card { background: var(--white); border-radius: 12px; padding: 25px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); margin-bottom: 20px; }
-        .card-title { margin-top: 0; font-size: 16px; margin-bottom: 20px; border-left: 4px solid var(--primary); padding-left: 10px; }
-        
-        /* 表单样式 */
-        .row { display: flex; gap: 20px; flex-wrap: wrap; }
-        .col { flex: 1; min-width: 280px; }
-        .form-box { background: #f9f9f9; padding: 15px; border-radius: 8px; }
-        .form-box h4 { margin: 0 0 15px 0; font-size: 14px; color: #666; }
-        input, select { padding: 8px; border: 1px solid #ddd; border-radius: 4px; margin-right: 10px; }
-        button { padding: 8px 15px; background: var(--primary); color: white; border: none; border-radius: 4px; cursor: pointer; }
-        button:hover { opacity: 0.9; }
-
-        /* 表格与提示 */
+        .row { display: flex; gap: 20px; flex-wrap: wrap; } .col { flex: 1; min-width: 280px; }
+        input, button { padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        button { background: var(--primary); color: white; border: none; cursor: pointer; }
         table { width: 100%; border-collapse: collapse; font-size: 14px; }
         th, td { padding: 12px 10px; border-bottom: 1px solid #eee; text-align: left; }
-        .tag-date { background: #e6f7ff; color: #1890ff; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
-        .alert { padding: 10px; border-radius: 6px; margin-bottom: 20px; font-size: 14px; }
-        .alert.success { background: #f6ffed; border: 1px solid #b7eb8f; color: #389e0d; }
-        .alert.error { background: #fff2f0; border: 1px solid #ffccc7; color: #cf1322; }
-
-        @media (max-width: 600px) { .row { gap: 10px; } input { width: 100%; margin-bottom: 10px; } }
+        .alert { padding: 10px; background: #f6ffed; border: 1px solid #b7eb8f; color: #389e0d; margin-bottom: 20px; border-radius: 6px; }
+        .msg-cell { max-width: 200px; color: #666; font-size: 13px; }
     </style>
 </head>
 <body>
-
 <div class="dashboard">
-    <div class="nav-bar">
-        <h2>📅 管理后台</h2>
-        <div class="nav-actions">
-            <a href="../index.php" target="_blank">预览前台</a>
-            <a href="login.php" style="color:var(--danger)">退出</a>
-        </div>
-    </div>
-
+    <div class="nav-bar"><h2>📅 管理后台</h2><div><a href="../index.php" target="_blank">预览</a> <a href="login.php" style="color:red;margin-left:10px">退出</a></div></div>
     <?= $sys_msg ?>
 
     <div class="card">
-        <h3 class="card-title">⚙️ 名额设置 (默认每天20人)</h3>
+        <h3>⚙️ 限额设置</h3>
         <div class="row">
-            <div class="col form-box">
-                <h4>📅 按月批量设置</h4>
-                <form method="post">
-                    <input type="month" name="month" value="<?= date('Y-m') ?>" required>
-                    <input type="number" name="limit" placeholder="每天名额 (如 50)" required style="width:120px">
-                    <button type="submit" name="batch_update">批量应用</button>
-                </form>
-            </div>
-            <div class="col form-box">
-                <h4>✏️ 单日单独调整</h4>
-                <form method="post">
-                    <input type="date" name="date" value="<?= date('Y-m-d') ?>" required>
-                    <input type="number" name="limit" placeholder="名额" required style="width:80px">
-                    <button type="submit" name="single_update">修改</button>
-                </form>
-            </div>
+            <div class="col"><form method="post">整月批量: <input type="month" name="month" value="<?= date('Y-m') ?>" required> <input type="number" name="limit" placeholder="50" style="width:60px" required> <button type="submit" name="batch_update">设置</button></form></div>
+            <div class="col"><form method="post">单日修改: <input type="date" name="date" value="<?= date('Y-m-d') ?>" required> <input type="number" name="limit" placeholder="20" style="width:60px" required> <button type="submit" name="single_update">设置</button></form></div>
         </div>
     </div>
 
-    <div class="card">
-        <h3 class="card-title">📈 本月热度 (总计: <?= $total_month ?>)</h3>
-        <div style="height: 250px;">
-            <canvas id="adminChart"></canvas>
-        </div>
-    </div>
+    <div class="card"><h3>📈 本月数据 (<?= $total_month ?>人)</h3><div style="height:250px"><canvas id="adminChart"></canvas></div></div>
 
     <div class="card">
-        <h3 class="card-title">📝 最新预约</h3>
+        <h3>📝 预约列表</h3>
         <div style="overflow-x: auto;">
             <table>
-                <thead>
-                    <tr><th>ID</th><th>昵称</th><th>联系方式</th><th>预约日期</th><th>操作</th></tr>
-                </thead>
+                <thead><tr><th>ID</th><th>昵称</th><th>联系方式</th><th>日期</th><th>留言备注</th><th>操作</th></tr></thead>
                 <tbody>
                     <?php foreach($list as $item): ?>
                     <tr>
                         <td>#<?= $item['id'] ?></td>
                         <td><?= htmlspecialchars($item['name']) ?></td>
                         <td><?= htmlspecialchars($item['phone']) ?></td>
-                        <td><span class="tag-date"><?= date('Y-m-d', strtotime($item['book_time'])) ?></span></td>
-                        <td><a href="?del=<?= $item['id'] ?>" style="color:red;text-decoration:none" onclick="return confirm('确定删除？')">删除</a></td>
+                        <td><?= date('m-d', strtotime($item['book_time'])) ?></td>
+                        <td class="msg-cell"><?= htmlspecialchars($item['message']) ?></td>
+                        <td><a href="?del=<?= $item['id'] ?>" style="color:red" onclick="return confirm('删?')">删除</a></td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>
@@ -192,26 +97,11 @@ $total_month = array_sum($final_chart_counts);
         </div>
     </div>
 </div>
-
 <script>
-    const ctx = document.getElementById('adminChart').getContext('2d');
-    new Chart(ctx, {
+    new Chart(document.getElementById('adminChart'), {
         type: 'bar',
-        data: {
-            labels: <?= json_encode($final_chart_labels) ?>,
-            datasets: [{
-                label: '已预约人数',
-                data: <?= json_encode($final_chart_counts) ?>,
-                backgroundColor: 'rgba(74, 144, 226, 0.6)',
-                borderRadius: 4
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
-            scales: { y: { beginAtZero: true, grid: { borderDash: [5, 5] } }, x: { grid: { display: false } } }
-        }
+        data: { labels: <?= json_encode($final_labels) ?>, datasets: [{ label: '人数', data: <?= json_encode($final_counts) ?>, backgroundColor: '#4a90e2' }] },
+        options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{x:{grid:{display:false}}} }
     });
 </script>
 </body>
