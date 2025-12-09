@@ -57,63 +57,114 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
     <style>
+        /* === 核心配色变量 === */
         :root {
+            /* 浅色模式 (默认) */
             --primary: #4f46e5;
             --primary-hover: #4338ca;
             --bg: #f3f4f6;
             --card: #ffffff;
-            --text-dark: #111827; /* 更黑的文字 */
-            --text-gray: #4b5563;
+            --text-main: #111827;
+            --text-sub: #4b5563;
             --border: #d1d5db;
+            --input-bg: #f9fafb;
+            --notice-bg: #fff7ed;
+            --notice-border: #ffedd5;
+            --notice-text: #c2410c;
+            --shadow: rgba(0, 0, 0, 0.1);
+        }
+
+        /* 深色模式 (Dark Mode) */
+        [data-theme="dark"] {
+            --primary: #6366f1; /* 稍亮一点的紫色，在深色背景更清晰 */
+            --primary-hover: #818cf8;
+            --bg: #111827;      /* 深灰蓝背景 */
+            --card: #1f2937;    /* 卡片背景 */
+            --text-main: #f9fafb; /* 亮白文字 */
+            --text-sub: #9ca3af;  /* 浅灰副标题 */
+            --border: #374151;    /* 深色边框 */
+            --input-bg: #111827;  /* 输入框深底 */
+            --notice-bg: #431407; /* 深橙色背景 */
+            --notice-border: #78350f;
+            --notice-text: #fdba74; /* 亮橙色文字 */
+            --shadow: rgba(0, 0, 0, 0.5);
+        }
+
+        /* 全局过渡动画 */
+        body, .container, input, textarea, .notice-box, button, .footer {
+            transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
         }
         
         body {
-            /* 使用系统字体栈，优先粗体显示清晰 */
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             background: var(--bg);
-            color: var(--text-dark);
+            color: var(--text-main);
             margin: 0;
             padding: 20px;
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
+            position: relative;
         }
         
+        /* 这里的 max-width 稍微调大一点点，让布局更舒展 */
         .container {
             background: var(--card);
             width: 100%;
             max-width: 440px;
             padding: 35px;
-            border-radius: 20px; /* 更圆润 */
-            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+            border-radius: 20px;
+            box-shadow: 0 10px 25px -5px var(--shadow), 0 8px 10px -6px var(--shadow);
+            border: 1px solid var(--border);
         }
         
+        /* === 主题切换按钮 === */
+        .theme-toggle {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            box-shadow: 0 4px 6px var(--shadow);
+            z-index: 100;
+        }
+        .theme-toggle:hover { background: var(--input-bg); }
+        .theme-toggle span { font-size: 24px; }
+
         .header { text-align: center; margin-bottom: 30px; }
         .header h1 {
             margin: 0 0 10px 0;
             font-size: 26px;
-            color: #000;
-            font-weight: 800; /* 特粗标题 */
+            color: var(--text-main);
+            font-weight: 800;
             letter-spacing: -0.5px;
         }
         .header p {
             margin: 0;
-            color: var(--text-gray);
+            color: var(--text-sub);
             font-size: 15px;
-            font-weight: 500; /* 副标题也稍微加粗 */
+            font-weight: 500;
         }
         
         /* 公告栏 */
         .notice-box {
-            background: #fff7ed;
-            border: 2px solid #ffedd5; /* 边框加粗 */
-            color: #c2410c;
+            background: var(--notice-bg);
+            border: 2px solid var(--notice-border);
+            color: var(--notice-text);
             padding: 15px;
             border-radius: 10px;
             margin-bottom: 25px;
             font-size: 14px;
-            font-weight: 600; /* 公告文字加粗 */
+            font-weight: 600;
             display: flex;
             gap: 10px;
             line-height: 1.5;
@@ -125,8 +176,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         label {
             display: block;
             font-size: 14px;
-            font-weight: 700; /* 标签加粗 */
-            color: #111; /* 纯黑 */
+            font-weight: 700;
+            color: var(--text-main);
             margin-top: 20px;
             margin-bottom: 8px;
         }
@@ -134,30 +185,35 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         input, textarea, select {
             width: 100%;
             padding: 14px;
-            border: 2px solid #e5e7eb; /* 边框稍微加粗 */
+            border: 2px solid var(--border);
             border-radius: 10px;
-            background: #f9fafb;
+            background: var(--input-bg);
             box-sizing: border-box;
             font-size: 16px;
             font-family: inherit;
-            color: #000;
-            font-weight: 500; /* 输入的内容文字加粗 (Medium) */
-            transition: all 0.2s;
+            color: var(--text-main);
+            font-weight: 500;
         }
         
+        /* 针对日期选择器的图标颜色适配 */
+        ::-webkit-calendar-picker-indicator {
+            filter: invert(var(--dark-mode-invert, 0));
+        }
+        [data-theme="dark"] { --dark-mode-invert: 1; }
+
         input:focus, textarea:focus {
             border-color: var(--primary);
-            background: #fff;
             outline: none;
-            box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.1);
+            box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.2);
         }
         
         input::placeholder, textarea::placeholder {
-            color: #9ca3af;
-            font-weight: 400; /* 占位符保持正常粗细 */
+            color: var(--text-sub);
+            font-weight: 400;
+            opacity: 0.7;
         }
         
-        button {
+        button.submit-btn {
             width: 100%;
             padding: 16px;
             background: var(--primary);
@@ -165,15 +221,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             border: none;
             border-radius: 10px;
             font-size: 17px;
-            font-weight: 700; /* 按钮文字加粗 */
+            font-weight: 700;
             cursor: pointer;
             margin-top: 30px;
-            transition: background 0.2s, transform 0.1s;
             letter-spacing: 0.5px;
         }
         
-        button:hover { background: var(--primary-hover); }
-        button:active { transform: scale(0.98); }
+        button.submit-btn:hover { background: var(--primary-hover); }
+        button.submit-btn:active { transform: scale(0.98); }
         
         /* 提示框 */
         .alert {
@@ -182,24 +237,28 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             text-align: center;
             margin-bottom: 25px;
             font-size: 15px;
-            font-weight: 600; /* 提示文字加粗 */
+            font-weight: 600;
             display: flex;
             align-items: center;
             justify-content: center;
             gap: 8px;
         }
-        .alert.success { background: #dcfce7; color: #166534; } 
-        .alert.error { background: #fee2e2; color: #991b1b; }
+        .alert.success { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; } 
+        /* 深色模式下的 Alert 适配 */
+        [data-theme="dark"] .alert.success { background: #064e3b; color: #a7f3d0; border-color: #065f46; }
+
+        .alert.error { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+        [data-theme="dark"] .alert.error { background: #7f1d1d; color: #fecaca; border-color: #991b1b; }
         
-        .word-count { text-align: right; font-size: 13px; font-weight: 500; color: #6b7280; margin-top: 6px; }
+        .word-count { text-align: right; font-size: 13px; font-weight: 500; color: var(--text-sub); margin-top: 6px; }
         
         .footer {
             text-align: center;
             margin-top: 30px;
             font-size: 13px;
             font-weight: 500;
-            color: #9ca3af;
-            border-top: 2px dashed #f3f4f6;
+            color: var(--text-sub);
+            border-top: 2px dashed var(--border);
             padding-top: 20px;
         }
         .footer a { color: inherit; text-decoration: none; font-weight: 600; }
@@ -208,47 +267,51 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 </head>
 <body>
 
-<div class="container">
-    <div class="header">
-        <h1>预约登记服务</h1>
-        <p>请填写下方信息，名额有限，先到先得</p>
-    </div>
+    <button class="theme-toggle" id="themeBtn" title="切换深色模式">
+        <span class="material-symbols-outlined" id="themeIcon">dark_mode</span>
+    </button>
 
-    <?php if (isset($settings['notice_status']) && $settings['notice_status'] == '1'): ?>
-    <div class="notice-box">
-        <span class="material-symbols-outlined notice-icon">campaign</span>
-        <span><?= nl2br(htmlspecialchars($settings['notice_content'])) ?></span>
-    </div>
-    <?php endif; ?>
-
-    <?php if($msg): ?>
-        <div class="alert <?= $msg_type ?>">
-            <span class="material-symbols-outlined" style="font-size:20px"><?= $msg_type=='success'?'check_circle':'error' ?></span>
-            <?= $msg ?>
+    <div class="container">
+        <div class="header">
+            <h1>预约登记服务</h1>
+            <p>请填写下方信息，名额有限，先到先得</p>
         </div>
-    <?php endif; ?>
 
-    <form method="post">
-        <label>您的微信名 / 电报名</label>
-        <input type="text" name="name" required placeholder="请输入您的昵称" autocomplete="off">
-        
-        <label>微信号 / 电报号</label>
-        <input type="text" name="contact" required placeholder="请输入您的账号ID" autocomplete="off">
+        <?php if (isset($settings['notice_status']) && $settings['notice_status'] == '1'): ?>
+        <div class="notice-box">
+            <span class="material-symbols-outlined notice-icon">campaign</span>
+            <span><?= nl2br(htmlspecialchars($settings['notice_content'])) ?></span>
+        </div>
+        <?php endif; ?>
 
-        <label>预约日期</label>
-        <input type="date" name="date" required id="datePicker">
+        <?php if($msg): ?>
+            <div class="alert <?= $msg_type ?>">
+                <span class="material-symbols-outlined" style="font-size:20px"><?= $msg_type=='success'?'check_circle':'error' ?></span>
+                <?= $msg ?>
+            </div>
+        <?php endif; ?>
+
+        <form method="post">
+            <label>您的微信名 / 电报名</label>
+            <input type="text" name="name" required placeholder="请输入您的昵称" autocomplete="off">
+            
+            <label>微信号 / 电报号</label>
+            <input type="text" name="contact" required placeholder="请输入您的账号ID" autocomplete="off">
+
+            <label>预约日期</label>
+            <input type="date" name="date" required id="datePicker">
+            
+            <label>留言备注 (选填)</label>
+            <textarea name="message" id="msgInput" rows="3" maxlength="100" placeholder="如有特殊需求请告知..."></textarea>
+            <div class="word-count"><span id="charCount">0</span>/100</div>
+            
+            <button type="submit" class="submit-btn">立即提交预约</button>
+        </form>
         
-        <label>留言备注 (选填)</label>
-        <textarea name="message" id="msgInput" rows="3" maxlength="100" placeholder="如有特殊需求请告知..."></textarea>
-        <div class="word-count"><span id="charCount">0</span>/100</div>
-        
-        <button type="submit">立即提交预约</button>
-    </form>
-    
-    <div class="footer">
-        &copy; <?= date('Y') ?> 在线预约系统 | <a href="admin/">管理员登录</a>
+        <div class="footer">
+            &copy; <?= date('Y') ?> 在线预约系统 | <a href="admin/">管理员登录</a>
+        </div>
     </div>
-</div>
 
 <script>
     // 1. 设置默认日期为今天
@@ -260,6 +323,40 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     msgInput.addEventListener('input', function() {
         charCount.textContent = this.value.length;
     });
+
+    // 3. 深色模式逻辑
+    const themeBtn = document.getElementById('themeBtn');
+    const themeIcon = document.getElementById('themeIcon');
+    const htmlEl = document.documentElement;
+
+    // 检查本地存储或系统偏好
+    const savedTheme = localStorage.getItem('theme');
+    const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+    // 初始化主题
+    if (savedTheme === 'dark' || (!savedTheme && systemDark)) {
+        enableDark();
+    }
+
+    themeBtn.addEventListener('click', () => {
+        if (htmlEl.getAttribute('data-theme') === 'dark') {
+            enableLight();
+        } else {
+            enableDark();
+        }
+    });
+
+    function enableDark() {
+        htmlEl.setAttribute('data-theme', 'dark');
+        themeIcon.textContent = 'light_mode'; // 切换图标为太阳
+        localStorage.setItem('theme', 'dark');
+    }
+
+    function enableLight() {
+        htmlEl.removeAttribute('data-theme');
+        themeIcon.textContent = 'dark_mode'; // 切换图标为月亮
+        localStorage.setItem('theme', 'light');
+    }
 </script>
 
 </body>
