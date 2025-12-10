@@ -40,6 +40,33 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         } else {
             $conn->prepare("INSERT INTO appointments (name, phone, book_time, message) VALUES (?, ?, ?, ?)")
                  ->execute([$name, $contact, $date . " 09:00:00", $message]);
+
+            // ==========================================
+            // [新增] Telegram 机器人通知逻辑
+            // ==========================================
+            try {
+                // 1. 读取数据库配置
+                $tg_token = $conn->query("SELECT value FROM settings WHERE name='tg_bot_token'")->fetchColumn();
+                $tg_chat = $conn->query("SELECT value FROM settings WHERE name='tg_chat_id'")->fetchColumn();
+
+                if (!empty($tg_token) && !empty($tg_chat)) {
+                    // 2. 拼接消息内容 (Markdown格式)
+                    $txt = "🔔 *新预约提醒*\n\n" .
+                           "👤 *用户*: " . $name . "\n" .
+                           "📱 *联系*: `" . $contact . "`\n" .
+                           "📅 *日期*: " . $date . "\n" .
+                           "📝 *备注*: " . ($message ?: '无');
+
+                    // 3. 发送请求 (带3秒超时，防止卡顿)
+                    $url = "https://api.telegram.org/bot{$tg_token}/sendMessage?chat_id={$tg_chat}&parse_mode=Markdown&text=" . urlencode($txt);
+                    $ctx = stream_context_create(['http' => ['timeout' => 3]]);
+                    @file_get_contents($url, false, $ctx);
+                }
+            } catch (Exception $e) {
+                // 通知失败不影响主流程
+            }
+            // ==========================================
+            
             $msg = "✅ 预约提交成功！请等待管理员联系。";
             $msg_type = "success";
         }
