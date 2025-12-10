@@ -1,79 +1,104 @@
 <?php
-// 1. 基础配置与检测
-if (!file_exists('config.php') || filesize('config.php') < 10) { header("Location: install.php"); exit; }
-require_once 'config.php';
-if (!isset($conn)) { echo "Error: Database not connected."; exit; }
+// ==================================================
+// 1. 初始化与核心逻辑
+// ==================================================
+session_start();
+date_default_timezone_set('Asia/Shanghai');
 
-// 2. 读取公告配置
+// 检查配置文件
+$config_file = __DIR__ . '/config.php';
+if (!file_exists($config_file) || filesize($config_file) < 10) { 
+    // 如果没有 config.php，尝试跳转安装或报错
+    die("❌ 配置文件 config.php 缺失，请先安装。"); 
+}
+require_once $config_file;
+
+// 数据库连接检测
+if (!isset($conn)) { die("Error: Database connection failed."); }
+
+// 读取系统配置
 $settings = [];
 try {
-    $stmt = $conn->query("SELECT * FROM settings WHERE name IN ('notice_status', 'notice_content')");
+    $stmt = $conn->query("SELECT * FROM settings WHERE name IN ('notice_status', 'notice_content', 'tg_bot_token', 'tg_chat_id')");
     while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
         $settings[$row['name']] = $row['value'];
     }
 } catch (Exception $e) {}
 
-$msg = ''; 
-$msg_type = '';
-
-// 3. 处理表单提交
+// ==================================================
+// 2. 处理表单提交 (PRG 模式防止重复提交)
+// ==================================================
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $name = strip_tags($_POST['name']);
-    $contact = strip_tags($_POST['contact']);
+    $name = strip_tags(trim($_POST['name']));
+    $contact = strip_tags(trim($_POST['contact']));
     $date = $_POST['date'];
-    $message = strip_tags($_POST['message']);
+    $message = strip_tags(trim($_POST['message']));
     
-    // 获取当天的限额
-    $limit = 20; 
-    try {
-        $stmt = $conn->prepare("SELECT max_num FROM daily_limits WHERE date = ?");
-        $stmt->execute([$date]);
-        if ($row = $stmt->fetch()) $limit = $row['max_num'];
-        
-        // 获取当天已预约数量
-        $cnt = $conn->prepare("SELECT COUNT(*) FROM appointments WHERE DATE(book_time) = ?");
-        $cnt->execute([$date]);
-        
-        if ($cnt->fetchColumn() >= $limit) {
-            $msg = "⚠️ 该日期 ({$date}) 名额已满，请更换其他日期。";
-            $msg_type = "error";
-        } else {
-            $conn->prepare("INSERT INTO appointments (name, phone, book_time, message) VALUES (?, ?, ?, ?)")
-                 ->execute([$name, $contact, $date . " 09:00:00", $message]);
+    // 简单的后端校验
+    if (empty($name) || empty($contact) || empty($date)) {
+        $_SESSION['flash_msg'] = ['type' => 'error', 'content' => '❌ 请填写完整信息'];
+    } else {
+        try {
+            // 获取当天的限额
+            $limit = 20; 
+            $stmt = $conn->prepare("SELECT max_num FROM daily_limits WHERE date = ?");
+            $stmt->execute([$date]);
+            if ($row = $stmt->fetch()) $limit = $row['max_num'];
+            
+            // 获取当天已预约数量
+            $cnt = $conn->prepare("SELECT COUNT(*) FROM appointments WHERE DATE(book_time) = ?");
+            $cnt->execute([$date]);
+            
+            if ($cnt->fetchColumn() >= $limit) {
+                $_SESSION['flash_msg'] = ['type' => 'error', 'content' => "⚠️ 该日期 ({$date}) 名额已满，请更换其他日期。"];
+            } else {
+                // 执行插入
+                $conn->prepare("INSERT INTO appointments (name, phone, book_time, message) VALUES (?, ?, ?, ?)")
+                     ->execute([$name, $contact, $date . " 09:00:00", $message]);
 
-            // ==========================================
-            // [新增] Telegram 机器人通知逻辑
-            // ==========================================
-            try {
-                // 1. 读取数据库配置
-                $tg_token = $conn->query("SELECT value FROM settings WHERE name='tg_bot_token'")->fetchColumn();
-                $tg_chat = $conn->query("SELECT value FROM settings WHERE name='tg_chat_id'")->fetchColumn();
+                // ------------------------------------------
+                // 发送 Telegram 通知
+                // ------------------------------------------
+                $tg_token = $settings['tg_bot_token'] ?? '';
+                $tg_chat = $settings['tg_chat_id'] ?? '';
 
                 if (!empty($tg_token) && !empty($tg_chat)) {
-                    // 2. 拼接消息内容 (Markdown格式)
                     $txt = "🔔 *新预约提醒*\n\n" .
                            "👤 *用户*: " . $name . "\n" .
                            "📱 *联系*: `" . $contact . "`\n" .
                            "📅 *日期*: " . $date . "\n" .
                            "📝 *备注*: " . ($message ?: '无');
 
-                    // 3. 发送请求 (带3秒超时，防止卡顿)
+                    // 异步/超时处理，防止卡顿
                     $url = "https://api.telegram.org/bot{$tg_token}/sendMessage?chat_id={$tg_chat}&parse_mode=Markdown&text=" . urlencode($txt);
-                    $ctx = stream_context_create(['http' => ['timeout' => 3]]);
+                    $ctx = stream_context_create(['http' => ['timeout' => 2]]); // 2秒超时
                     @file_get_contents($url, false, $ctx);
                 }
-            } catch (Exception $e) {
-                // 通知失败不影响主流程
+                
+                $_SESSION['flash_msg'] = ['type' => 'success', 'content' => "✅ 预约提交成功！请等待管理员联系。"];
             }
-            // ==========================================
-            
-            $msg = "✅ 预约提交成功！请等待管理员联系。";
-            $msg_type = "success";
+        } catch (Exception $e) {
+            $_SESSION['flash_msg'] = ['type' => 'error', 'content' => "❌ 提交失败，数据库错误。"];
         }
-    } catch (Exception $e) {
-        $msg = "提交失败，请检查输入或稍后再试。";
-        $msg_type = "error";
     }
+
+    // [关键] 跳转回当前页面，清除 POST 状态
+    header("Location: " . $_SERVER['REQUEST_URI']);
+    exit;
+}
+
+// ==================================================
+// 3. 读取并清除 Session 消息
+// ==================================================
+$msg_html = '';
+if (isset($_SESSION['flash_msg'])) {
+    $m = $_SESSION['flash_msg'];
+    $icon = $m['type'] == 'success' ? 'check_circle' : 'error';
+    $msg_html = "<div class='alert {$m['type']}'>
+                    <span class='material-symbols-outlined' style='font-size:20px'>{$icon}</span>
+                    {$m['content']}
+                 </div>";
+    unset($_SESSION['flash_msg']);
 }
 ?>
 <!DOCTYPE html>
@@ -103,21 +128,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         /* 深色模式 (Dark Mode) */
         [data-theme="dark"] {
-            --primary: #6366f1; /* 稍亮一点的紫色，在深色背景更清晰 */
+            --primary: #6366f1;
             --primary-hover: #818cf8;
-            --bg: #111827;      /* 深灰蓝背景 */
-            --card: #1f2937;    /* 卡片背景 */
-            --text-main: #f9fafb; /* 亮白文字 */
-            --text-sub: #9ca3af;  /* 浅灰副标题 */
-            --border: #374151;    /* 深色边框 */
-            --input-bg: #111827;  /* 输入框深底 */
-            --notice-bg: #431407; /* 深橙色背景 */
+            --bg: #111827;
+            --card: #1f2937;
+            --text-main: #f9fafb;
+            --text-sub: #9ca3af;
+            --border: #374151;
+            --input-bg: #111827;
+            --notice-bg: #431407;
             --notice-border: #78350f;
-            --notice-text: #fdba74; /* 亮橙色文字 */
+            --notice-text: #fdba74;
             --shadow: rgba(0, 0, 0, 0.5);
         }
 
-        /* 全局过渡动画 */
         body, .container, input, textarea, .notice-box, button, .footer {
             transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
         }
@@ -135,7 +159,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             position: relative;
         }
         
-        /* 这里的 max-width 稍微调大一点点，让布局更舒展 */
         .container {
             background: var(--card);
             width: 100%;
@@ -168,21 +191,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         .theme-toggle span { font-size: 24px; }
 
         .header { text-align: center; margin-bottom: 30px; }
-        .header h1 {
-            margin: 0 0 10px 0;
-            font-size: 26px;
-            color: var(--text-main);
-            font-weight: 800;
-            letter-spacing: -0.5px;
-        }
-        .header p {
-            margin: 0;
-            color: var(--text-sub);
-            font-size: 15px;
-            font-weight: 500;
-        }
+        .header h1 { margin: 0 0 10px 0; font-size: 26px; color: var(--text-main); font-weight: 800; letter-spacing: -0.5px; }
+        .header p { margin: 0; color: var(--text-sub); font-size: 15px; font-weight: 500; }
         
-        /* 公告栏 */
         .notice-box {
             background: var(--notice-bg);
             border: 2px solid var(--notice-border);
@@ -199,17 +210,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         }
         .notice-icon { font-weight: normal; font-size: 20px; margin-top: 1px; flex-shrink: 0; }
 
-        /* 表单元素 */
-        label {
-            display: block;
-            font-size: 14px;
-            font-weight: 700;
-            color: var(--text-main);
-            margin-top: 20px;
-            margin-bottom: 8px;
-        }
+        label { display: block; font-size: 14px; font-weight: 700; color: var(--text-main); margin-top: 20px; margin-bottom: 8px; }
         
-        input, textarea, select {
+        input, textarea {
             width: 100%;
             padding: 14px;
             border: 2px solid var(--border);
@@ -223,22 +226,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         }
         
         /* 针对日期选择器的图标颜色适配 */
-        ::-webkit-calendar-picker-indicator {
-            filter: invert(var(--dark-mode-invert, 0));
-        }
+        ::-webkit-calendar-picker-indicator { filter: invert(var(--dark-mode-invert, 0)); }
         [data-theme="dark"] { --dark-mode-invert: 1; }
 
-        input:focus, textarea:focus {
-            border-color: var(--primary);
-            outline: none;
-            box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.2);
-        }
-        
-        input::placeholder, textarea::placeholder {
-            color: var(--text-sub);
-            font-weight: 400;
-            opacity: 0.7;
-        }
+        input:focus, textarea:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.2); }
+        input::placeholder, textarea::placeholder { color: var(--text-sub); font-weight: 400; opacity: 0.7; }
         
         button.submit-btn {
             width: 100%;
@@ -253,9 +245,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             margin-top: 30px;
             letter-spacing: 0.5px;
         }
-        
         button.submit-btn:hover { background: var(--primary-hover); }
         button.submit-btn:active { transform: scale(0.98); }
+        button.submit-btn:disabled { background: var(--text-sub); cursor: not-allowed; opacity: 0.7; }
         
         /* 提示框 */
         .alert {
@@ -269,9 +261,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             align-items: center;
             justify-content: center;
             gap: 8px;
+            animation: fadeIn 0.5s ease;
         }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+
         .alert.success { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; } 
-        /* 深色模式下的 Alert 适配 */
         [data-theme="dark"] .alert.success { background: #064e3b; color: #a7f3d0; border-color: #065f46; }
 
         .alert.error { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
@@ -288,8 +282,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             border-top: 2px dashed var(--border);
             padding-top: 20px;
         }
-        .footer a { color: inherit; text-decoration: none; font-weight: 600; }
-        .footer a:hover { color: var(--primary); }
     </style>
 </head>
 <body>
@@ -304,21 +296,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             <p>请填写下方信息，名额有限，先到先得</p>
         </div>
 
-        <?php if (isset($settings['notice_status']) && $settings['notice_status'] == '1'): ?>
+        <?php if (!empty($settings['notice_status']) && $settings['notice_status'] == '1'): ?>
         <div class="notice-box">
             <span class="material-symbols-outlined notice-icon">campaign</span>
             <span><?= nl2br(htmlspecialchars($settings['notice_content'])) ?></span>
         </div>
         <?php endif; ?>
 
-        <?php if($msg): ?>
-            <div class="alert <?= $msg_type ?>">
-                <span class="material-symbols-outlined" style="font-size:20px"><?= $msg_type=='success'?'check_circle':'error' ?></span>
-                <?= $msg ?>
-            </div>
-        <?php endif; ?>
+        <?= $msg_html ?>
 
-        <form method="post">
+        <form method="post" id="appointForm">
             <label>您的微信名 / 电报名</label>
             <input type="text" name="name" required placeholder="请输入您的昵称" autocomplete="off">
             
@@ -326,13 +313,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             <input type="text" name="contact" required placeholder="请输入您的账号ID" autocomplete="off">
 
             <label>预约日期</label>
-            <input type="date" name="date" required id="datePicker">
+            <input type="date" name="date" required id="datePicker" min="<?= date('Y-m-d') ?>">
             
             <label>留言备注 (选填)</label>
             <textarea name="message" id="msgInput" rows="3" maxlength="100" placeholder="如有特殊需求请告知..."></textarea>
             <div class="word-count"><span id="charCount">0</span>/100</div>
             
-            <button type="submit" class="submit-btn">立即提交预约</button>
+            <button type="submit" class="submit-btn" id="submitBtn">立即提交预约</button>
         </form>
         
         <div class="footer">
@@ -342,7 +329,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 <script>
     // 1. 设置默认日期为今天
-    document.getElementById('datePicker').valueAsDate = new Date();
+    const dateInput = document.getElementById('datePicker');
+    if (!dateInput.value) {
+        dateInput.valueAsDate = new Date();
+    }
     
     // 2. 留言字数统计
     const msgInput = document.getElementById('msgInput');
@@ -351,37 +341,36 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         charCount.textContent = this.value.length;
     });
 
-    // 3. 深色模式逻辑
+    // 3. [新增] 防止表单重复提交 (前端禁用按钮)
+    const form = document.getElementById('appointForm');
+    const btn = document.getElementById('submitBtn');
+    form.addEventListener('submit', function() {
+        btn.disabled = true;
+        btn.innerText = '提交中...';
+    });
+
+    // 4. 深色模式逻辑
     const themeBtn = document.getElementById('themeBtn');
     const themeIcon = document.getElementById('themeIcon');
     const htmlEl = document.documentElement;
-
-    // 检查本地存储或系统偏好
     const savedTheme = localStorage.getItem('theme');
     const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
 
-    // 初始化主题
-    if (savedTheme === 'dark' || (!savedTheme && systemDark)) {
-        enableDark();
-    }
+    if (savedTheme === 'dark' || (!savedTheme && systemDark)) { enableDark(); }
 
     themeBtn.addEventListener('click', () => {
-        if (htmlEl.getAttribute('data-theme') === 'dark') {
-            enableLight();
-        } else {
-            enableDark();
-        }
+        if (htmlEl.getAttribute('data-theme') === 'dark') { enableLight(); } else { enableDark(); }
     });
 
     function enableDark() {
         htmlEl.setAttribute('data-theme', 'dark');
-        themeIcon.textContent = 'light_mode'; // 切换图标为太阳
+        themeIcon.textContent = 'light_mode';
         localStorage.setItem('theme', 'dark');
     }
 
     function enableLight() {
         htmlEl.removeAttribute('data-theme');
-        themeIcon.textContent = 'dark_mode'; // 切换图标为月亮
+        themeIcon.textContent = 'dark_mode';
         localStorage.setItem('theme', 'light');
     }
 </script>
