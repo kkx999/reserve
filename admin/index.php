@@ -4,7 +4,7 @@ if (!isset($_SESSION['is_admin'])) { header("Location: login.php"); exit; }
 require '../config.php';
 
 // ==================================================
-// 1. 数据库自动维护 (逻辑保持不变)
+// 1. 数据库自动维护
 // ==================================================
 try {
     $conn->exec("CREATE TABLE IF NOT EXISTS daily_limits (date DATE PRIMARY KEY, max_num INT NOT NULL DEFAULT 20)");
@@ -19,7 +19,7 @@ $sys_msg = '';
 $current_month = isset($_GET['month']) ? $_GET['month'] : date('Y-m');
 
 // ==================================================
-// 2. 核心逻辑处理 (逻辑保持不变)
+// 2. 核心逻辑处理
 // ==================================================
 
 // A. 修改管理员账号密码
@@ -61,6 +61,7 @@ if (isset($_POST['save_notice'])) {
 // C. 编辑/删除预约
 if (isset($_POST['update_appointment'])) {
     $book_time = $_POST['edit_date'] . " 09:00:00";
+    // 注意：这里的 edit_name 对应 "微信名"，edit_phone 对应 "微信号"
     $conn->prepare("UPDATE appointments SET name=?, phone=?, book_time=?, message=? WHERE id=?")
           ->execute([$_POST['edit_name'], $_POST['edit_phone'], $book_time, $_POST['edit_message'], $_POST['edit_id']]);
     $sys_msg = "<div class='toast success'><span class='material-symbols-outlined'>check_circle</span> 预约信息已更新</div>";
@@ -84,7 +85,7 @@ if (isset($_POST['single_update_modal'])) {
 }
 
 // ==================================================
-// 3. 数据读取 (逻辑保持不变)
+// 3. 数据读取
 // ==================================================
 $admin_info = $conn->query("SELECT username FROM admins LIMIT 1")->fetch(PDO::FETCH_ASSOC);
 $current_username = $admin_info ? $admin_info['username'] : 'admin';
@@ -208,7 +209,6 @@ for ($d = 1; $d <= $days_in_month; $d++) {
         .day-stats { font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
         .progress-track { height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden; width: 100%; }
         .progress-bar { height: 100%; transition: width 0.4s ease; border-radius: 3px; }
-        /* 状态颜色 */
         .status-normal .progress-bar { background: var(--success); }
         .status-warn .progress-bar { background: var(--warning); }
         .status-full .progress-bar { background: var(--danger); }
@@ -228,8 +228,11 @@ for ($d = 1; $d <= $days_in_month; $d++) {
             border-radius: 50%; display: flex; align-items: center; justify-content: center; 
             font-weight: 600; font-size: 14px; flex-shrink: 0;
         }
-        .user-text div:first-child { font-weight: 500; }
-        .user-text div:last-child { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+        .id-badge {
+            font-family: monospace; font-size: 13px; color: var(--primary);
+            background: #e0e7ff; padding: 4px 8px; border-radius: 6px; display: inline-block;
+            letter-spacing: 0.5px;
+        }
         .msg-cell { max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-muted); }
 
         /* Toast 提示 */
@@ -314,7 +317,8 @@ for ($d = 1; $d <= $days_in_month; $d++) {
                     <table>
                         <thead>
                             <tr>
-                                <th>客户信息</th>
+                                <th>您的微信名 / 电报名</th>
+                                <th>微信号 / 电报号</th>
                                 <th>预约日期</th>
                                 <th>留言备注</th>
                                 <th style="text-align:right">操作</th>
@@ -326,11 +330,11 @@ for ($d = 1; $d <= $days_in_month; $d++) {
                                 <td>
                                     <div class="user-info">
                                         <div class="avatar"><?= mb_substr($r['name'],0,1) ?></div>
-                                        <div class="user-text">
-                                            <div><?= htmlspecialchars($r['name']) ?></div>
-                                            <div><?= htmlspecialchars($r['phone']) ?></div>
-                                        </div>
+                                        <div style="font-weight:500"><?= htmlspecialchars($r['name']) ?></div>
                                     </div>
+                                </td>
+                                <td>
+                                    <span class="id-badge"><?= htmlspecialchars($r['phone']) ?></span>
                                 </td>
                                 <td>
                                     <div style="font-weight:500"><?= date('m-d', strtotime($r['book_time'])) ?></div>
@@ -408,8 +412,8 @@ for ($d = 1; $d <= $days_in_month; $d++) {
             <input type="hidden" name="edit_id" id="eid">
             
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
-                <div><label style="font-size:12px;color:#666">姓名</label><input name="edit_name" id="ename" required></div>
-                <div><label style="font-size:12px;color:#666">电话</label><input name="edit_phone" id="ephone" required></div>
+                <div><label style="font-size:12px;color:#666">您的微信名 / 电报名</label><input name="edit_name" id="ename" required></div>
+                <div><label style="font-size:12px;color:#666">微信号 / 电报号</label><input name="edit_phone" id="ephone" required></div>
             </div>
             
             <label style="font-size:12px;color:#666">预约日期</label>
